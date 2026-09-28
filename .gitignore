@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.installed
+
+# Generated results (regenerate with `run.bat`)
+output*/
+output_*/
+
+# Large / raw audio - only the two 3-minute demo clips are committed.
+# (kitchen2.wav is 118 MB; the rest are the original downloads and
+#  microphone captures, all reproducible or private.)
+audio/*.ogg
+audio/kitchen2.wav
+audio/recording*.wav
+audio/recording_*.wav
+audio/recording_check.wav
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
