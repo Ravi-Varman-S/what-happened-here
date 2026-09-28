@@ -16,10 +16,12 @@ cd /d "%~dp0"
 
 rem --- prefer an existing Python that already has the libraries --------------
 set "PY=python"
+if "%WHH_VENV%"=="1" goto :build     REM WHH_VENV=1 forces a clean environment
 python -c "import numpy, scipy, soundfile, librosa, matplotlib, tensorflow" >nul 2>nul
 if not errorlevel 1 goto :ready
 
 rem --- otherwise build a local virtual environment ---------------------------
+:build
 if not exist ".venv\Scripts\python.exe" (
     echo [setup] Creating virtual environment in .venv ...
     where python >nul 2>nul
