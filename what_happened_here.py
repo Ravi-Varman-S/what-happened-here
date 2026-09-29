@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import csv
 import os
@@ -11,13 +10,8 @@ from pathlib import Path
 # Keep TensorFlow quiet *before* it is imported.
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 warnings.filterwarnings("ignore")
-
 import numpy as np
-
-# --------------------------------------------------------------------------- #
-# Configuration
-# --------------------------------------------------------------------------- #
-
+# --------------------------------------------------------------------------- Configuration #
 TARGET_SR = 16_000        # YAMNet's native sample rate
 TARGET_RMS_DB = -26.0     # loudness we normalise the file to
 PEAK_CEIL = 0.99          # never normalise past this peak
@@ -30,7 +24,7 @@ HOP_SEC = 0.010
 DEFAULT_MIN_DURATION = 0.10   # ignore blips shorter than this
 DEFAULT_MERGE_GAP = 0.40      # glue events separated by less than this
 DEFAULT_ATTACK_SEC = 0.10     # must stay loud this long before an event opens
-DEFAULT_RELEASE_SEC = 0.10     # must stay quiet this long before it closes
+DEFAULT_RELEASE_SEC = 0.10    # must stay quiet this long before it closes
 
 # Classes that contradict the detector: it only fires where sound *is*
 # present, so "Silence" can never be the right answer for a detected event.
@@ -46,12 +40,7 @@ YAMNET_HOP_SEC = 0.48         # YAMNet analysis hop
 MIN_CONFIDENCE = 0.20         # below this we call a segment "unlabelled"
 
 SPEECH_THRESHOLD = 0.30       # frame score counted as speech
-
-
-# --------------------------------------------------------------------------- #
-# Data structures
-# --------------------------------------------------------------------------- #
-
+# --------------------------------------------------------------------------- #Data structures
 @dataclass
 class Event:
     """One detected sound event."""
@@ -65,12 +54,7 @@ class Event:
     @property
     def duration(self) -> float:
         return self.end - self.start
-
-
-# --------------------------------------------------------------------------- #
-# 1. Load and clean the audio
-# --------------------------------------------------------------------------- #
-
+# --------------------------------------------------------------------------- # Load and clean the audio
 def decode_to_array(path: Path, target_sr: int) -> tuple[np.ndarray, int]:
     """Read *path* into a float32 mono array sampled at ``target_sr``.
 
@@ -83,11 +67,9 @@ def decode_to_array(path: Path, target_sr: int) -> tuple[np.ndarray, int]:
         data, sr = sf.read(str(path), dtype="float32", always_2d=True)
     except Exception:
         data, sr = _ffmpeg_decode(path, target_sr)
-
     # Stereo -> mono (average of channels)
     mono = data.mean(axis=1)
     return mono, sr
-
 
 def _ffmpeg_decode(path: Path, target_sr: int) -> tuple[np.ndarray, int]:
     """Decode exotic containers with the ffmpeg binary bundled by imageio-ffmpeg."""
@@ -109,14 +91,12 @@ def _ffmpeg_decode(path: Path, target_sr: int) -> tuple[np.ndarray, int]:
         data, sr = sf.read(str(out), dtype="float32", always_2d=True)
     return data, sr
 
-
 def resample(mono: np.ndarray, sr: int, target_sr: int) -> np.ndarray:
     """High-quality resample (soxr kernel) or pass-through when already matched."""
     if sr == target_sr:
         return mono.astype(np.float32, copy=False)
     import librosa
     return librosa.resample(mono, orig_sr=sr, target_sr=target_sr).astype(np.float32)
-
 
 def normalize(mono: np.ndarray, target_db: float = TARGET_RMS_DB) -> np.ndarray:
     """RMS-normalise to *target_db* with a peak ceiling so nothing clips."""
@@ -128,7 +108,6 @@ def normalize(mono: np.ndarray, target_db: float = TARGET_RMS_DB) -> np.ndarray:
     if peak > PEAK_CEIL:
         gain *= PEAK_CEIL / peak
     return (mono * gain).astype(np.float32)
-
 
 def load_and_clean(path: Path,
                    target_sr: int = TARGET_SR,
@@ -145,11 +124,7 @@ def load_and_clean(path: Path,
             mono = np.pad(mono, (0, n - len(mono)))
 
     return normalize(mono)
-
-
-# --------------------------------------------------------------------------- #
-# 2. Detect when events start and stop  -- written by hand
-# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- # Detect when events start and stop  -- written by hand
 
 def energy_curve(mono: np.ndarray,
                  sr: int,
@@ -264,7 +239,7 @@ def detect_events(mono: np.ndarray,
     attack = max(1, int(round(attack_sec / HOP_SEC)))
     release = max(1, int(round(release_sec / HOP_SEC)))
 
-    # ---- debounced state machine ----------------------------------------- #
+    # --------------------------------------------- # debounced state machine 
     segments: list[list[float]] = []
     active = False
     start_t = 0.0
@@ -296,7 +271,7 @@ def detect_events(mono: np.ndarray,
     if active:
         segments.append([start_t, float(times[-1])])
 
-    # ---- clean-up: merge close segments, drop micro blips ----------------- #
+    # --------------------- # clean-up: merge close segments, drop micro blips 
     merged: list[list[float]] = []
     for seg in segments:
         if merged and seg[0] - merged[-1][1] <= merge_gap:
@@ -312,10 +287,7 @@ def detect_events(mono: np.ndarray,
     debug = dict(times=times, db=smooth, on=on_thr, off=off_thr, baseline=baseline)
     return events, debug
 
-
-# --------------------------------------------------------------------------- #
-# 3. Label each event with YAMNet
-# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- # Label each event with YAMNet
 
 class YamnetLabeller:
     """Wraps the pretrained YAMNet model from TensorFlow Hub."""
@@ -326,8 +298,6 @@ class YamnetLabeller:
 
         self.model = hub.load("https://tfhub.dev/google/yamnet/1")
 
-        # The class map is bundled as an asset of the SavedModel itself,
-        # so no extra network request is needed to name the 521 classes.
         asset = self.model.class_map_path().numpy().decode()
         self.labels = pd.read_csv(asset)["display_name"].tolist()
 
@@ -392,10 +362,7 @@ def label_events(events: list[Event],
             ev.label = f"{ev.label} (?)"
     return events
 
-
-# --------------------------------------------------------------------------- #
-# 4. Reporting: spectrogram, table, statistics
-# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- # Reporting: spectrogram, table, statistics
 
 def plot_spectrogram(mono: np.ndarray,
                      events: list[Event],
@@ -546,7 +513,7 @@ def statistics(events: list[Event],
         counts[key] = counts.get(key, 0) + 1
         time_by_label[key] = time_by_label.get(key, 0.0) + ev.duration
 
-    # --- one-sentence plain-language answer ------------------------------ #
+    # --------------------------------- #  one-sentence plain-language answer 
     if events and counts:
         top_name, top_n = sorted(counts.items(), key=lambda kv: -kv[1])[0]
         loudest = max(events, key=lambda e: e.score)
@@ -585,10 +552,7 @@ def statistics(events: list[Event],
     print(text)
     return text
 
-
-# --------------------------------------------------------------------------- #
-# CLI
-# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- # CLI
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
@@ -621,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # --- 1. load & clean --------------------------------------------------- #
+    # ------------------------------------------------------ #1. load & clean
     print(f"[1/4] Loading and cleaning {src.name} ...")
     # --duration 0 (default) means "use the whole recording"; only trim when
     # the caller explicitly asks for a shorter window.
@@ -632,7 +596,7 @@ def main(argv: list[str] | None = None) -> int:
           f"peak {np.max(np.abs(audio)):.3f}, "
           f"rms {20*np.log10(np.sqrt(np.mean(audio**2))):.1f} dB")
 
-    # --- 2. detect --------------------------------------------------------- #
+    # ------------------------------------------------------------ # 2. detect 
     print("[2/4] Detecting event boundaries from energy/loudness ...")
     events, dbg = detect_events(audio, TARGET_SR,
                                 min_duration=args.min_duration,
@@ -643,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
                                 release_sec=args.release)
     print(f"      -> {len(events)} events found")
 
-    # --- 3. label ---------------------------------------------------------- #
+    # ------------------------------------------------------------- # 3. label 
     scores = np.zeros((0, 521), dtype=np.float32)
     centers = np.zeros(0)
     labels: list[str] = []
@@ -657,7 +621,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("[3/4] Skipping YAMNet (--skip-model)")
 
-    # --- 4. report --------------------------------------------------------- #
+    # ------------------------------------------------------------ # 4. report 
     print("[4/4] Writing spectrogram + table ...\n")
     png = outdir / "spectrogram.png"
     plot_spectrogram(audio, events, TARGET_SR, png, src.name, dbg)
