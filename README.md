@@ -33,12 +33,18 @@ python record.py                 # 180 s countdown -> records -> analyses
 python record.py --seconds 150   # 2 min 30 s
 python record.py --list-devices  # show microphones
 python record.py --device 5 --lead-in 0 --no-analyze
+python record.py --no-live-labels  # level meter only
 ```
 
 `record.py` shows a live level meter while it captures (with a CLIPPING
-warning), writes a 16-bit WAV into `audio\`, then hands the file straight to
-the analyser. **Ctrl+C stops early and still saves.** Everything is 2–3
-minutes by default, matching the brief.
+warning) **and a live label**: as you record, the meter names what YAMNet
+hears at that moment — `LIVE: Speaking 92%`, `LIVE: Vehicle 44%`, or
+`LIVE: Silent` when the level falls under the ambient floor +6 dB, the same
+rule the detector uses. The model is loaded before the countdown so it never
+steals audio from the take, and a `live heard : …` tally is printed when the
+recording ends. It writes a 16-bit WAV into `audio\`, then hands the file
+straight to the analyser. **Ctrl+C stops early and still saves.** Everything
+is 2–3 minutes by default, matching the brief.
 
 ## Analyse an existing file
 
@@ -64,7 +70,9 @@ this file from energy over time, as the task requires.
 ```
 run.bat / run.sh               one-command setup + run
 what_happened_here.py          the tool (single file, CLI)
-record.py                      recorder: 2-3 min from the mic, live level meter
+record.py                      recorder: 2-3 min from the mic, live level
+                               meter + live YAMNet labels (LIVE: Speaking / Silent)
+test_live.py                   exercises the live labeller without a microphone
 APPROACH.md                    write-up: approach, failures, improvements
 README.md, requirements.txt
 audio\street_3min.wav          sample: street outside a window, 3:00, public domain
