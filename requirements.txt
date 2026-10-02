@@ -1,19 +1,16 @@
-# What Happened Here? — dependencies
-# Python 3.12 (Windows)
-
 # 1. load & clean
 numpy==2.5.3
 scipy==1.18.1
 soundfile==0.14.0
 librosa==1.0.0
-imageio-ffmpeg==0.6.0        # decodes containers soundfile cannot (Speex/Opus/M4A)
-sounddevice==0.5.6           # microphone capture for record.py (bundles PortAudio)
+imageio-ffmpeg==0.6.0        
+sounddevice==0.5.6         
 
 # 3. labelling (YAMNet)
 tensorflow-cpu==2.21.0
 tensorflow-hub==0.16.1
 pandas==3.0.6
-setuptools<81                # tensorflow-hub still imports pkg_resources
+setuptools<81               
 
 # 4. reporting
 matplotlib==3.11.2
