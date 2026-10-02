@@ -7,39 +7,30 @@ import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Keep TensorFlow quiet *before* it is imported.
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 warnings.filterwarnings("ignore")
 import numpy as np
 # --------------------------------------------------------------------------- Configuration #
-TARGET_SR = 16_000        # YAMNet's native sample rate
-TARGET_RMS_DB = -26.0     # loudness we normalise the file to
-PEAK_CEIL = 0.99          # never normalise past this peak
-
-# Frame / hop used for the energy curve (seconds)
+TARGET_SR = 16_000        
+TARGET_RMS_DB = -26.0     
+PEAK_CEIL = 0.99          
 FRAME_SEC = 0.025
 HOP_SEC = 0.010
-
-# Event detector defaults (seconds / dB)
-DEFAULT_MIN_DURATION = 0.10   # ignore blips shorter than this
-DEFAULT_MERGE_GAP = 0.40      # glue events separated by less than this
-DEFAULT_ATTACK_SEC = 0.10     # must stay loud this long before an event opens
-DEFAULT_RELEASE_SEC = 0.10    # must stay quiet this long before it closes
-
-# Classes that contradict the detector: it only fires where sound *is*
-# present, so "Silence" can never be the right answer for a detected event.
+DEFAULT_MIN_DURATION = 0.10   
+DEFAULT_MERGE_GAP = 0.40     
+DEFAULT_ATTACK_SEC = 0.10     
+DEFAULT_RELEASE_SEC = 0.10    
 NON_EVENT_LABELS = {"Silence", "Noise", "Static"}
-DEFAULT_SMOOTH_SEC = 0.06     # moving-average smoothing of the dB curve
-BASELINE_SEC = 5.0            # window of the rolling background estimate
-BASELINE_PCT = 25.0           # percentile used as the ambient noise floor
-ON_MARGIN_DB = 6.0            # dB above baseline that starts an event
-OFF_MARGIN_DB = 4.0           # dB above baseline that ends it
+DEFAULT_SMOOTH_SEC = 0.06   
+BASELINE_SEC = 5.0           
+BASELINE_PCT = 25.0           
+ON_MARGIN_DB = 6.0           
+OFF_MARGIN_DB = 4.0           
+MIN_SEGMENT_SEC = 0.96       
+YAMNET_HOP_SEC = 0.48        
+MIN_CONFIDENCE = 0.20         
 
-MIN_SEGMENT_SEC = 0.96        # YAMNet analysis window length
-YAMNET_HOP_SEC = 0.48         # YAMNet analysis hop
-MIN_CONFIDENCE = 0.20         # below this we call a segment "unlabelled"
-
-SPEECH_THRESHOLD = 0.30       # frame score counted as speech
+SPEECH_THRESHOLD = 0.30       
 # --------------------------------------------------------------------------- #Data structures
 @dataclass
 class Event:
@@ -56,23 +47,17 @@ class Event:
         return self.end - self.start
 # --------------------------------------------------------------------------- # Load and clean the audio
 def decode_to_array(path: Path, target_sr: int) -> tuple[np.ndarray, int]:
-    """Read *path* into a float32 mono array sampled at ``target_sr``.
-
-    ``soundfile`` handles WAV/FLAC/OGG-Vorbis.  Anything it cannot decode
-    (Speex/Opus OGG, MP3, ...) falls back to an ffmpeg transcode.
-    """
+  
     import soundfile as sf
 
     try:
         data, sr = sf.read(str(path), dtype="float32", always_2d=True)
     except Exception:
         data, sr = _ffmpeg_decode(path, target_sr)
-    # Stereo -> mono (average of channels)
     mono = data.mean(axis=1)
     return mono, sr
 
 def _ffmpeg_decode(path: Path, target_sr: int) -> tuple[np.ndarray, int]:
-    """Decode exotic containers with the ffmpeg binary bundled by imageio-ffmpeg."""
     import imageio_ffmpeg
     import soundfile as sf
     import subprocess
@@ -120,7 +105,7 @@ def load_and_clean(path: Path,
         n = int(round(duration * target_sr))
         if len(mono) >= n:
             mono = mono[:n]
-        else:                                    # pad with silence if too short
+        else:                                   
             mono = np.pad(mono, (0, n - len(mono)))
 
     return normalize(mono)
@@ -130,18 +115,13 @@ def energy_curve(mono: np.ndarray,
                  sr: int,
                  frame_sec: float = FRAME_SEC,
                  hop_sec: float = HOP_SEC) -> tuple[np.ndarray, np.ndarray]:
-    """Loudness of the signal over time.
-
-    The signal is cut into overlapping frames; each frame's RMS is converted
-    to decibels.  Returns ``(times, db)`` where *times* are frame centres.
-    """
     frame = max(1, int(round(frame_sec * sr)))
     hop = max(1, int(round(hop_sec * sr)))
 
     if len(mono) < frame:
         mono = np.pad(mono, (0, frame - len(mono)))
 
-    # Stride-trick framing: shape (n_frames, frame)
+   
     n_frames = 1 + (len(mono) - frame) // hop
     idx = np.arange(frame)[None, :] + hop * np.arange(n_frames)[:, None]
     frames = mono[idx]
@@ -166,17 +146,7 @@ def _moving_average(x: np.ndarray, n: int) -> np.ndarray:
 
 
 def _rolling_percentile(x: np.ndarray, window: int, pct: float) -> np.ndarray:
-    """Rolling percentile used as a robust estimate of the local noise floor.
-
-    A low percentile (rather than the median) deliberately ignores the loud
-    parts of the signal, so an event that stays loud for several seconds is
-    still measured against the *ambient* level of that neighbourhood.
-
-    The first and last ``window // 2`` frames cannot have a full window, so
-    they use a partial one instead of padding with the end value — otherwise
-    a silent first frame would drag the baseline of the whole opening
-    seconds down to digital silence.
-    """
+ 
     if window <= 1:
         return x.copy()
     if window % 2 == 0:
@@ -186,9 +156,9 @@ def _rolling_percentile(x: np.ndarray, window: int, pct: float) -> np.ndarray:
     from scipy.ndimage import percentile_filter
     out = percentile_filter(x, percentile=pct, size=window, mode="nearest")
 
-    for i in range(min(pad, len(x))):                 # opening: partial window
+    for i in range(min(pad, len(x))):               
         out[i] = np.percentile(x[: i + pad + 1], pct)
-    for i in range(max(0, len(x) - pad), len(x)):     # closing: partial window
+    for i in range(max(0, len(x) - pad), len(x)):   
         out[i] = np.percentile(x[max(0, i - pad):], pct)
     return out
 
@@ -198,13 +168,6 @@ def adaptive_thresholds(db: np.ndarray,
                         off_margin: float = OFF_MARGIN_DB,
                         window_sec: float = BASELINE_SEC,
                         pct: float = BASELINE_PCT) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Hysteresis thresholds that follow a slowly-changing background level.
-
-    A rolling low-percentile gives the ambient noise floor; an event is "on"
-    once the loudness rises ``on_margin`` dB above it and "off" again once it
-    falls back under ``off_margin`` dB.  Using two levels (hysteresis) stops a
-    noisy event from flickering in and out.
-    """
     window = int(round(window_sec / HOP_SEC))
     baseline = _rolling_percentile(db, window, pct)
     return baseline + on_margin, baseline + off_margin, baseline
@@ -219,18 +182,7 @@ def detect_events(mono: np.ndarray,
                   off_margin: float = OFF_MARGIN_DB,
                   attack_sec: float = DEFAULT_ATTACK_SEC,
                   release_sec: float = DEFAULT_RELEASE_SEC) -> tuple[list[Event], dict]:
-    """Step 2: find where sound events start and stop.
-
-    The state machine is deliberately debounced in both directions: the level
-    must stay **above** the start threshold for ``attack_sec`` before an event
-    opens, and stay **below** the stop threshold for ``release_sec`` before it
-    closes.  Without this, ordinary jitter on a smooth background would flicker
-    the state open and closed many times a second and manufacture dozens of
-    phantom events (each of which YAMNet would then honestly label "Silence").
-
-    Returns ``(events, debug)`` where *debug* carries the energy curve for
-    plotting.
-    """
+   
     times, db = energy_curve(mono, sr)
     smooth = _moving_average(db, int(round(smooth_sec / HOP_SEC)))
 
@@ -244,26 +196,26 @@ def detect_events(mono: np.ndarray,
     active = False
     start_t = 0.0
     end_t = 0.0
-    above = 0          # consecutive frames above the start threshold
-    below = 0          # consecutive frames below the stop threshold
+    above = 0          
+    below = 0         
 
     for t, v, hi, lo in zip(times, smooth, on_thr, off_thr):
         if not active:
             if v > hi:
                 if above == 0:
-                    start_t = t          # remember the very first loud frame
+                    start_t = t          
                 above += 1
-                if above >= attack:      # sustained -> open the event
+                if above >= attack:     
                     active = True
                     below = 0
             else:
-                above = 0                 # flicker -> cancel, never opened
+                above = 0                 
         else:
             if v < lo:
                 if below == 0:
-                    end_t = t            # remember the first quiet frame
+                    end_t = t            
                 below += 1
-                if below >= release:      # sustained -> close the event
+                if below >= release:   
                     active = False
                     segments.append([start_t, end_t])
             else:
@@ -290,7 +242,6 @@ def detect_events(mono: np.ndarray,
 # --------------------------------------------------------------------------- # Label each event with YAMNet
 
 class YamnetLabeller:
-    """Wraps the pretrained YAMNet model from TensorFlow Hub."""
 
     def __init__(self):
         import pandas as pd
@@ -302,11 +253,6 @@ class YamnetLabeller:
         self.labels = pd.read_csv(asset)["display_name"].tolist()
 
     def scores(self, mono: np.ndarray, sr: int = TARGET_SR) -> tuple[np.ndarray, np.ndarray]:
-        """Run YAMNet over the whole recording.
-
-        Returns ``(scores, frame_times)``; one row of 521 probabilities every
-        0.48 s, with *frame_times* marking the centre of each analysis window.
-        """
         scores, _, _ = self.model(mono.astype(np.float32))
         scores = np.asarray(scores, dtype=np.float32)
         starts = np.arange(len(scores)) * YAMNET_HOP_SEC
@@ -324,40 +270,28 @@ def label_events(events: list[Event],
                  scores: np.ndarray,
                  centers: np.ndarray,
                  labels: list[str]) -> list[Event]:
-    """Attach the most likely YAMNet class to every detected event.
-
-    Classes that would contradict the detector (``Silence``, ``Noise``…) are
-    ruled out before ranking: step 2 only opens an event where the loudness is
-    several dB *above* the local background, so silence cannot be the answer.
-    Whatever wins is therefore the best explanation of sound that we already
-    know is there.
-    """
     if len(events) == 0 or len(scores) == 0:
         return events
-
-    # Resolve the blocked class indices once, not per event.
     blocked = np.array([i for i, name in enumerate(labels)
                         if name in NON_EVENT_LABELS], dtype=int)
 
     for ev in events:
         mask = (centers >= ev.start) & (centers <= ev.end)
-        if not mask.any():                       # very short event -> nearest frame
+        if not mask.any():                      
             nearest = int(np.argmin(np.abs(centers - (ev.start + ev.end) / 2)))
             mask = np.zeros(len(centers), dtype=bool)
             mask[nearest] = True
 
         mean_score = scores[mask].mean(axis=0)
         raw_best = int(np.argmax(mean_score))
-        blocked_hit = raw_best in blocked           # model heard nothing nameable
+        blocked_hit = raw_best in blocked          
 
         ranked = mean_score.copy()
-        ranked[blocked] = -1.0                      # silence can never win
+        ranked[blocked] = -1.0                    
         best = YamnetLabeller.top_k(ranked, labels, k=3)
 
         ev.candidates = best
         ev.label, ev.score = best[0]
-        # Flag low confidence, and also flag a swapped-in answer: the model's
-        # own favourite was "Silence", so it did not really recognise a sound.
         if ev.score < MIN_CONFIDENCE or blocked_hit:
             ev.label = f"{ev.label} (?)"
     return events
@@ -370,12 +304,6 @@ def plot_spectrogram(mono: np.ndarray,
                      out_path: Path,
                      title: str,
                      debug: dict | None = None) -> None:
-    """Spectrogram with the detected events shaded and labelled.
-
-    The lower panel shows the hand-computed loudness curve together with the
-    adaptive background estimate and the two hysteresis thresholds, so it is
-    obvious *why* each event was cut where it was.
-    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -405,12 +333,11 @@ def plot_spectrogram(mono: np.ndarray,
     n_rows = 6
     font = 6.8
     row_y = [top * (0.97 - 0.085 * r) for r in range(n_rows)]
-    row_edge = [-1e9] * n_rows            # right edge (seconds) per row
-
+    row_edge = [-1e9] * n_rows         
     fig_w = fig.get_size_inches()[0]
     sec_per_in = duration / fig_w
 
-    # Greedy row assignment so labels never overlap each other.
+   
     for ev in sorted(events, key=lambda e: e.start):
         c = colours[(ev.index - 1) % len(colours)]
         ax.axvspan(ev.start, ev.end, color=c, alpha=0.30, linewidth=0)
@@ -503,7 +430,6 @@ def statistics(events: list[Event],
                centers: np.ndarray,
                labels: list[str],
                duration: float) -> str:
-    """Optional bonus: count things worth knowing about the recording."""
     lines = ["", "=" * 66, "WHAT HAPPENED HERE?  — summary", "=" * 66]
 
     counts: dict[str, int] = {}
@@ -529,7 +455,6 @@ def statistics(events: list[Event],
     for name, n in sorted(counts.items(), key=lambda kv: -kv[1])[:8]:
         lines.append(f"  {name:<34} x{n:<4} ({time_by_label[name]:.1f} s total)")
 
-    # How much of the recording is speech?  Frame-level check, not just events.
     if len(scores):
         try:
             speech_idx = labels.index("Speech")
@@ -587,8 +512,6 @@ def main(argv: list[str] | None = None) -> int:
 
     # ------------------------------------------------------ #1. load & clean
     print(f"[1/4] Loading and cleaning {src.name} ...")
-    # --duration 0 (default) means "use the whole recording"; only trim when
-    # the caller explicitly asks for a shorter window.
     window = args.duration if args.duration and args.duration > 0 else None
     audio = load_and_clean(src, TARGET_SR, window)
     duration = len(audio) / TARGET_SR
