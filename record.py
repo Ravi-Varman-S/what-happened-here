@@ -1,26 +1,3 @@
-r"""
-What Happened Here? — recorder
-==============================
-
-Records 2–3 minutes of an everyday setting from a microphone, then hands the
-file to the analysis tool.
-
-    python record.py                          # 180 s, default mic, then analyse
-    python record.py --seconds 150            # 2 min 30 s
-    python record.py --list-devices           # show microphones
-    python record.py --device 2 --lead-in 0   # pick a mic, no countdown
-    python record.py --no-analyze             # just record
-    python record.py --no-live-labels         # meter only, no YAMNet watching
-
-The level meter runs while recording so you can tell the microphone is live,
-and so does a **live label**: as you record, the meter shows what YAMNet hears
-right now — ``LIVE: Speaking 92%``, ``LIVE: Dog barking 71%``, or ``LIVE:
-Silent`` when the level falls back under the ambient floor +6 dB (the same
-rule the detector uses, so the live readout and the final report agree).
-Press Ctrl+C to stop early; whatever was captured is still saved, and a short
-tally of what was heard is printed at the end.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -41,12 +18,8 @@ import what_happened_here as eng
 PREFERRED_RATES = (48_000, 44_100, 32_000, 16_000)
 MIN_SECONDS = 1
 MAX_SECONDS = 600
-TASK_MIN, TASK_MAX = 120, 180          # "2-3 minutes" from the brief
+TASK_MIN, TASK_MAX = 120, 180        
 
-
-# --------------------------------------------------------------------------- #
-# Device helpers
-# --------------------------------------------------------------------------- #
 
 def list_devices() -> int:
     """Print every recording-capable device. Returns the default input index."""
@@ -101,31 +74,15 @@ def choose_samplerate(device: int, requested: float | None) -> float:
             continue
     return default_rate
 
+# --------------------------------------------------------------------------- #Live labelling
 
-# --------------------------------------------------------------------------- #
-# Live labelling — "what is the mic hearing *right now*?"
-# --------------------------------------------------------------------------- #
-
-LIVE_WINDOW = 0.96        # seconds of audio each live score looks at
-LIVE_HOP = 0.48           # how often the label refreshes (YAMNet's own hop)
-LIVE_FLOOR_SEC = 5.0      # same rolling-floor length the detector uses
+LIVE_WINDOW = 0.96      
+LIVE_HOP = 0.48          
+LIVE_FLOOR_SEC = 5.0     
 
 
 class LiveLabeller:
-    """Keeps a current "what's that?" label while the recording is running.
-
-    The audio callback must never block, so it only drops copied chunks into a
-    queue.  A worker thread loads YAMNet once (a few seconds — it starts while
-    the lead-in countdown is still ticking) and then every ``LIVE_HOP``
-    seconds scores the last ``LIVE_WINDOW`` seconds of audio, exactly like the
-    final analysis will.
-
-    Silence is decided the same way Step 2 decides it: the level has to fall
-    below the rolling 25th-percentile floor + ``ON_MARGIN_DB``.  Labels get the
-    same treatment as ``label_events()`` — Silence/Noise/Static are blocked
-    before ranking, and low-confidence or substituted answers carry a `` (?)``.
-    """
-
+   
     def __init__(self, enabled: bool = True):
         self.enabled = enabled
         self._q: queue.Queue = queue.Queue(maxsize=64)
@@ -139,15 +96,13 @@ class LiveLabeller:
                                         name="live-labeller")
         if enabled:
             self._thread.start()
-
-    # ---- called from the audio callback: copy, don't block ---------------- #
     def feed(self, chunk: np.ndarray, samplerate: int) -> None:
         if not self.enabled:
             return
         try:
             self._q.put_nowait((chunk.copy(), int(samplerate)))
         except queue.Full:
-            pass                      # drop a chunk rather than stall the mic
+            pass                      
 
     def stop(self) -> None:
         self._stop.set()
@@ -162,9 +117,9 @@ class LiveLabeller:
         if st["error"]:
             return f"labels unavailable"
         if not st["ready"]:
-            return st["label"]                      # "loading YAMNet…"
+            return st["label"]                      
         if st["label"] == "listening…":
-            return st["label"]                      # nothing scored yet
+            return st["label"]                   
         if st["silent"]:
             return "Silent"
         return f"{st['label']}{' (?)' if st['flag'] else ''} {st['conf']:.0%}"
@@ -177,10 +132,9 @@ class LiveLabeller:
         heard = sorted(st["tally"].items(), key=lambda kv: -kv[1])[:8]
         return ", ".join(f"{name} {secs:.0f}s" for name, secs in heard)
 
-    # ---- the worker -------------------------------------------------------- #
     def _run(self) -> None:
         try:
-            model = eng.YamnetLabeller()            # a few seconds, once
+            model = eng.YamnetLabeller()         
         except Exception as exc:
             self.state = {**self.state, "error": str(exc),
                           "label": "model failed to load"}
@@ -189,11 +143,11 @@ class LiveLabeller:
         labels = model.labels
         blocked = [i for i, n in enumerate(labels) if n in eng.NON_EVENT_LABELS]
 
-        buf = np.zeros(0, dtype=np.float32)         # device-rate rolling audio
+        buf = np.zeros(0, dtype=np.float32)       
         dev_sr = eng.TARGET_SR
-        levels: list[float] = []                    # recent level readings (dB)
-        tally: dict[str, float] = {}                # label -> seconds heard
-        recent: deque[str] = deque(maxlen=3)        # stability filter
+        levels: list[float] = []                   
+        tally: dict[str, float] = {}                
+        recent: deque[str] = deque(maxlen=3)       
         last_score = time.monotonic()
         self.state = {**self.state, "ready": True, "label": "listening…"}
 
@@ -213,9 +167,8 @@ class LiveLabeller:
                 continue
             last_score = now
             if buf.size < int(0.3 * dev_sr):
-                continue                              # too little audio yet
+                continue                              
 
-            # level of the freshest quarter-second
             tail = buf[-int(0.25 * dev_sr):]
             level_db = float(20 * np.log10(
                 np.sqrt(np.mean(tail.astype(np.float64) ** 2)) + 1e-9))
@@ -225,28 +178,27 @@ class LiveLabeller:
                                             25))
                 silent = level_db < floor + eng.ON_MARGIN_DB
             else:
-                silent = level_db < -45.0             # not enough history yet
+                silent = level_db < -45.0            
 
-            # score the last LIVE_WINDOW seconds, exactly as Step 3 will
             window = buf[-int(LIVE_WINDOW * dev_sr):]
             x16 = (eng.resample(window, dev_sr, eng.TARGET_SR)
                    if dev_sr != eng.TARGET_SR else window)
             need = int(eng.MIN_SEGMENT_SEC * eng.TARGET_SR)
-            if x16.size < need:              # YAMNet needs a whole 0.96 s
+            if x16.size < need:             
                 x16 = np.pad(x16, (0, need - x16.size))
 
             try:
                 scores, _ = model.scores(x16.astype(np.float32), eng.TARGET_SR)
                 if len(scores) == 0:
                     continue
-                row = scores.mean(axis=0)             # average the chunk's windows
-            except Exception as exc:                  # never kill the recording
+                row = scores.mean(axis=0)             
+            except Exception as exc:                 
                 self.state = {**self.state, "error": str(exc)}
                 continue
 
             raw = int(np.argmax(row))
             ranked = row.copy()
-            ranked[blocked] = -1.0                    # silence can never win
+            ranked[blocked] = -1.0                    
             best = int(np.argmax(ranked))
             conf = float(row[best])
             flag = conf < eng.MIN_CONFIDENCE or raw in blocked
@@ -254,7 +206,6 @@ class LiveLabeller:
             name = "Silent" if silent else labels[best]
             tally[name] = tally.get(name, 0.0) + LIVE_HOP
 
-            # show a label only once it repeats, so it doesn't strobe
             recent.append(name)
             counts = Counter(recent)
             top, n = counts.most_common(1)[0]
@@ -265,11 +216,7 @@ class LiveLabeller:
                 "silent": silent, "level_db": level_db,
                 "tally": dict(tally), "error": None,
             }
-
-
-# --------------------------------------------------------------------------- #
-# Recording
-# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #Recording
 
 def record(seconds: float, device: int | None, samplerate: float | None,
            labeller: LiveLabeller | None = None) -> tuple[np.ndarray, float]:
@@ -295,7 +242,7 @@ def record(seconds: float, device: int | None, samplerate: float | None,
         if written["peak"] >= 0.999:
             written["clipped"] = True
         if labeller is not None:
-            labeller.feed(chunk, rate)          # watch it live (never blocks)
+            labeller.feed(chunk, rate)         
         if written["n"] >= total:
             stop_now["flag"] = True
 
@@ -325,7 +272,7 @@ def record(seconds: float, device: int | None, samplerate: float | None,
         finally:
             elapsed = time.monotonic() - start
             if labeller is not None:
-                labeller.stop()              # let the last score finish
+                labeller.stop()            
         print()
 
     n = written["n"]
@@ -334,10 +281,7 @@ def record(seconds: float, device: int | None, samplerate: float | None,
         raise SystemExit(1)
     return buffer[:n].copy(), rate
 
-
-# --------------------------------------------------------------------------- #
-# Main
-# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #Main
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
@@ -386,8 +330,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  device    : {dev_name[:60]}")
     print(f"  length    : {args.seconds:.0f} s at {rate:.0f} Hz, mono")
 
-    # Start the live labeller now and wait for YAMNet: loading it mid-recording
-    # hogs the CPU (PortAudio overflows) and wastes the first seconds of audio.
     labeller = LiveLabeller(enabled=not args.no_live_labels)
     if labeller.enabled:
         print("  live label: loading YAMNet…", end="", flush=True)
