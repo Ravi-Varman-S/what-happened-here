@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 set "PY=python"
-if "%WHH_VENV%"=="1" goto :build     REM WHH_VENV=1 forces a clean environment
+if "%WHH_VENV%"=="1" goto :build     
 python -c "import numpy, scipy, soundfile, librosa, matplotlib, tensorflow" >nul 2>nul
 if not errorlevel 1 goto :ready
 
