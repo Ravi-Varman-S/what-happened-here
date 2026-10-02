@@ -1,10 +1,3 @@
-#!/usr/bin/env bash
-# What Happened Here? - one command to set up and run (macOS / Linux).
-#
-#   ./run.sh                 analyse the bundled demo clip (default)
-#   ./run.sh my.wav          analyse your own recording
-#   ./run.sh my.wav my_out   ... writing results into my_out/
-#   ./run.sh record [flags]  record from the microphone, then analyse
 set -e
 cd "$(dirname "$0")"
 
