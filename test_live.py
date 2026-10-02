@@ -1,5 +1,3 @@
-"""Exercise LiveLabeller without a microphone: feed the street clip chunk by
-chunk at real-time speed and check the label stream behaves."""
 import time
 
 import numpy as np
@@ -9,8 +7,8 @@ import record
 
 audio, sr = sf.read("audio/street_3min.wav", dtype="float32", always_2d=True)
 audio = audio.mean(axis=1)
-start = int(60 * sr)                                # a busier stretch
-audio = audio[start: start + int(20 * sr)]          # seconds 60-80
+start = int(60 * sr)                               
+audio = audio[start: start + int(20 * sr)]         
 
 lab = record.LiveLabeller(enabled=True)
 print("initial display :", lab.display())
@@ -25,7 +23,7 @@ for i in range(0, len(audio), step):
     if not seen or seen[-1] != d:
         seen.append(d)
         scores += 1
-    target = (i + step) / sr                         # pace like a live mic
+    target = (i + step) / sr                         
     delay = target - (time.monotonic() - t0)
     if delay > 0:
         time.sleep(delay)
